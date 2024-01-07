@@ -1,14 +1,33 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <zlib.h>
+#include <pthread.h>
 
 #define HEADER_SIZE sizeof(struct Header)
 #define MIN_BLOCK_SIZE 32
 
+/*
+ *  if compilator is GNUC then allocator gets inititialized at start of the program
+ * otherwise user needs to initialize allocator manually
+ * when static variable isInitialized is 0 that means it is not initialized and 1 points it is
+ */
+static int isInitialized;
+#ifdef __GNUC__
+void __attribute__((constructor)) init(void)
+{
+    initAllocator();
+}
+#endif
+
+
 void* alloc(size_t);
 void dealloc(void*);
-void printBlockList(void);
+static uLong calculateControlSumForHeader(struct Header*);
+static void printBlockList(void);
 void initAllocator(void);
+
+pthread_mutex_t mutex;
 
 struct Header
 {
@@ -16,6 +35,7 @@ struct Header
     int status;
     struct Header* priorHeader;
     struct Header* nextHeader;
+    uLong controlSum;
 };
 
 int main(void)
@@ -34,18 +54,6 @@ int main(void)
         tab[i] = i;
     }
 
-    // for (int i = 0; i < 10; i++)
-    // {
-    //     *(string + i) = 'k'; 
-    //     printf("%p\n", &string[i + 1]);
-    // }
-    // string[9] = '\0';
-    // printf("%s", string);
-
-    // for (int i = 0; i < 100; i++)
-    // {
-    //     printf("%d %p\n", tab[i], &tab[i]);
-    // }
 
     long* tab1 = (long*) alloc(37 * sizeof(long));
     printf("zalokowano pamięć dla longów\n");
@@ -66,9 +74,18 @@ int main(void)
     return 0;
 }
 
+/*
+ * initialization puts header of blocksize = 0 wich is the start of headers' list structure
+ */
 struct Header* initialHeader = NULL;
 void initAllocator(void)
-{
+{   
+    if(isInitialized == 1)
+    {
+        fprintf(stderr, "allocator is already initialized");
+        exit(EXIT_FAILURE);
+    }
+
     void* startBrk = sbrk(0);
     if(startBrk == (void*) -1)
     {
@@ -88,10 +105,20 @@ void initAllocator(void)
     initialHeader->status = 1;
     initialHeader->priorHeader = NULL;
     initialHeader->nextHeader = NULL;
+
+    isInitialized = 1;
 }
 
 void* alloc(size_t size_to_alloc)
 {
+    if(isInitialized == 0)
+    {
+        fprintf(stderr, "allocator is not initialized");
+        exit(EXIT_FAILURE);
+    }
+
+    // Synchronization using a mutex to prevent concurrent access by multiple threads.
+    pthread_mutex_lock(&mutex);
     struct Header* currentHeader = initialHeader;
     struct Header* priorHeader = initialHeader->priorHeader;
     while (currentHeader != NULL)
@@ -111,6 +138,7 @@ void* alloc(size_t size_to_alloc)
                 currentHeader->status = 1;
                 currentHeader->nextHeader = secondHeader;
             }
+            pthread_mutex_unlock(&mutex);
             return (void*) (currentHeader + 1);
         }
         priorHeader = currentHeader;
@@ -122,6 +150,7 @@ void* alloc(size_t size_to_alloc)
 
     if (newBrk == (void*) -1)
     {
+        pthread_mutex_unlock(&mutex);
         return NULL;
     }
 
@@ -130,17 +159,29 @@ void* alloc(size_t size_to_alloc)
     newHeader->status = 1;
     newHeader->priorHeader = priorHeader;
     newHeader->nextHeader = NULL;
+    newHeader->controlSum = calculateControlSumForHeader(newHeader);
 
     priorHeader->nextHeader = newHeader;
+
+    pthread_mutex_unlock(&mutex);
 
     return (void*) (newHeader + 1);
 }
 
 void dealloc(void* block_to_dealloc)
 {
+    if(isInitialized == 0)
+    {
+        fprintf(stderr, "allocator is not initialized");
+        exit(EXIT_FAILURE);
+    }
+
+    // synchronization using a mutex to prevent concurrent access by multiple threads.
+    pthread_mutex_lock(&mutex);
     struct Header* header_to_dealloc = (struct Header*) ((char*)(block_to_dealloc) - HEADER_SIZE);
     header_to_dealloc->status = 0;
 
+    // if next block is then free merge them together
     if (header_to_dealloc->nextHeader != NULL)
     {
         if (header_to_dealloc->nextHeader->status == 0)
@@ -159,6 +200,7 @@ void dealloc(void* block_to_dealloc)
         }
     }
     
+    // if prior block is free then merge it together
     if (header_to_dealloc->priorHeader != NULL)
     {
         if (header_to_dealloc->priorHeader->status == 0)
@@ -176,25 +218,28 @@ void dealloc(void* block_to_dealloc)
             }
         }
     }
-    //sprawdź czy blok przed nim jest wolny
-    //jeśli tak to scal z tym kolejnym blokiem
-    // to znaczy weź powiększ swój rozmiar o wielkość headera i rozmiar kolejnego bloku
-    // weź następnego sąsiada tego usuwanego bloku i zapisz go jako swojego następce
-    // temu samemu sąsiadowi ustaw samego siebie jako poprzednika
-    //sprawdź czy blok po nim jest wolny
-    //jeśli tak to scal go z poprzednim blokiem
-    // to znaczy weź powiększ rozmiar poprzednika o swój rozmiar + rozmiar headera
-    // weź ustaw poprzednikowi samego siebie jako następnika, a swojemu następnikowi ustaw mojego poprzednika jako porzednika
-    // gotowe 
-
+    pthread_mutex_unlock(&mutex);
 }
 
-void printBlockList(void)
+// function wich calculates CRC for passed header
+static uLong calculateControlSumForHeader(struct Header* header)
+{
+    uLong controlSum = 0;
+    controlSum = crc32(controlSum, (Bytef*) &(header->blockSize), sizeof(header->blockSize));
+    controlSum = crc32(controlSum, (Bytef*) &(header->status), sizeof(header->status));
+    controlSum = crc32(controlSum, (Bytef*) &(header->priorHeader), sizeof(header->priorHeader));
+    controlSum = crc32(controlSum, (Bytef*) &(header->nextHeader), sizeof(header->nextHeader));
+    return controlSum;
+}
+
+// function prints all existing blocks of memory
+static void printBlockList(void)
 {
     struct Header* currentHeader = initialHeader;
+    printf("Bloki w pamięci:\n");
     while (currentHeader != NULL)
     {
-        printf("size: %zu, status: %d\n", currentHeader->blockSize, currentHeader->status);
+        printf("size: %zu, controlSum: %d, status: %d\n", currentHeader->blockSize, currentHeader->controlSum, currentHeader->status);
         currentHeader = currentHeader->nextHeader;
     } 
 }
