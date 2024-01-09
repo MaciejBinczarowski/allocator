@@ -7,12 +7,14 @@
 
 #define HEADER_SIZE sizeof(struct Header)
 #define MIN_BLOCK_SIZE 32
-#define alloc(size_to_alloc) alloc(size_to_alloc, __FILE__, __LINE__)
+#define MAX_FILENAME_LENGTH 64
+#define alloc(size_to_alloc) allocate(size_to_alloc, __FILE__, __LINE__)
 
-void* alloc(size_t);
+void* allocate(size_t, const char*, int);
 void dealloc(void*);
 static uLong calculateControlSumForHeader(struct Header*);
-static void printBlockList(void);
+void printBlockList(void);
+static void printStatistics(void);
 void initAllocator(void);
 
 /*
@@ -34,11 +36,12 @@ struct Header
 {
     size_t blockSize;
     int status;
+    char file[MAX_FILENAME_LENGTH];
+    int line;
     struct Header* priorHeader;
     struct Header* nextHeader;
     uLong controlSum;
 };
-
 
 static struct 
 {
@@ -51,42 +54,6 @@ static struct
     int corruptedBlocksCount;
     int allocatedBlocksCount;
 } allocatorStatistics;
-
-int main(void)
-{
-    // initAllocator();
-    char* string = (char*) alloc(10 * sizeof(char));
-    printf("zalokowano pamięć dla charów\n");
-    printBlockList();
-
-    int* tab = (int*) alloc(100* sizeof(int));
-    printf("zalokowano pamięć dla intów\n");
-    printBlockList();
-
-    for(int i = 0; i < 100; i++)
-    {
-        tab[i] = i;
-    }
-
-
-    long* tab1 = (long*) alloc(37 * sizeof(long));
-    printf("zalokowano pamięć dla longów\n");
-    printBlockList();
-
-    dealloc(tab);
-    printBlockList();
-
-    short* shorts = (short*) alloc(49 * sizeof(short));
-    printBlockList();
-
-    dealloc(string);
-    printBlockList();
-
-    dealloc(shorts);
-    printBlockList();
-
-    return 0;
-}
 
 /*
  * initialization puts header of blocksize = 0 wich is the start of headers' list structure
@@ -130,7 +97,7 @@ void initAllocator(void)
     }
 }
 
-void* alloc(size_t size_to_alloc, const char* file, int line)
+void* allocate(size_t size_to_alloc, const char* file, int line)
 {
     if(isInitialized == 0)
     {
@@ -154,6 +121,19 @@ void* alloc(size_t size_to_alloc, const char* file, int line)
             {
                 abort();
             }
+
+            // save the file and the line where the allocation was called
+            const char* fileName = strrchr(file, '/');
+            if (strlen(fileName) > MAX_FILENAME_LENGTH)
+            {
+                strcpy(currentHeader->file, "Unknown file");
+            }
+            else
+            {
+                strcpy(currentHeader->file, fileName);
+            }
+
+            currentHeader->line = line;
 
             if (currentHeader->blockSize > size_to_alloc + HEADER_SIZE + MIN_BLOCK_SIZE)
             {   
@@ -212,6 +192,18 @@ void* alloc(size_t size_to_alloc, const char* file, int line)
     newHeader->nextHeader = NULL;
     newHeader->controlSum = calculateControlSumForHeader(newHeader);
 
+    const char* fileName = strrchr(file, '/');
+    if (strlen(fileName) > MAX_FILENAME_LENGTH)
+    {
+        strcpy(newHeader->file, "Unknown file");
+    }
+    else
+    {
+        strcpy(newHeader->file, fileName);
+    }
+
+    newHeader->line = line;
+
     // update priorHeader and calculate new controlSum
     priorHeader->nextHeader = newHeader;
     priorHeader->controlSum = calculateControlSumForHeader(priorHeader);
@@ -254,8 +246,10 @@ void dealloc(void* block_to_dealloc)
         abort();
     }
 
-    // mark block as free and clear its memory
+    // mark block as free, restart header, and clear its memory
     header_to_dealloc->status = 0;
+    memset(header_to_dealloc->file, '\0', MAX_FILENAME_LENGTH);
+    header_to_dealloc->line = 0;
     memset(header_to_dealloc + 1, 0, header_to_dealloc->blockSize);
     header_to_dealloc->controlSum = calculateControlSumForHeader(header_to_dealloc);
 
@@ -329,20 +323,37 @@ static uLong calculateControlSumForHeader(struct Header* header)
 }
 
 // function prints all existing blocks of memory
-static void printBlockList(void)
+void printBlockList(void)
 {
     struct Header* currentHeader = initialHeader;
-    printf("Bloki w pamięci:\n");
+    printf("memory dump:\n");
     while (currentHeader != NULL)
     {
-        printf("size: %zu, controlSum: %lu, status: %d\n", currentHeader->blockSize, currentHeader->controlSum, currentHeader->status);
+        printf("size: %zu, controlSum: %lu, status: %d, ", currentHeader->blockSize, currentHeader->controlSum, currentHeader->status);
+        printf("start: %p, end: %p, ", currentHeader + 1, (char*)(currentHeader + 1) + currentHeader->blockSize);
+        printf("file: %s, line: %d\n", currentHeader->file, currentHeader->line);
         currentHeader = currentHeader->nextHeader;
     } 
 }
 
-void printStatistics()
+void printStatistics(void)
 {
-    printf("allocation count: %d\ntotal bytes allocated: %zu\n", allocatorStatistics.allocationCount, allocatorStatistics.totalAllocatedBytes);
-    printf("current alocated bytes: %zu\nmax memory usage: %zu", allocatorStatistics.currentAllocatedBytes, allocatorStatistics.maxMemoryUsage);
-    printf("total sbrk requests: %d\naverage allocated bytes: %zu", allocatorStatistics.totalSbrkRequests, allocatorStatistics.averageAllocatedBytes);
+    printf("total allocated bytes: %zu\n", allocatorStatistics.totalAllocatedBytes);
+    printf("max memory usage: %zu\n", allocatorStatistics.maxMemoryUsage);
+    printf("average bytes allocated: %zu\n", allocatorStatistics.averageAllocatedBytes);
+    printf("alloction count: %d\n", allocatorStatistics.allocationCount);
+    printf("total sbrk requests: %d\n", allocatorStatistics.totalSbrkRequests);
+    printf("current allocated bytes: %zu\n", allocatorStatistics.currentAllocatedBytes);
+    printf("corrupted blocks: at least %d\n", allocatorStatistics.corruptedBlocksCount);
+
+    struct Header* currentHeader = initialHeader->nextHeader;
+    printf("unfreed blocks: %d\n", allocatorStatistics.allocatedBlocksCount);
+    while (currentHeader != NULL)
+    {
+        if (currentHeader->status == 1)
+        {
+            printf("filename: %s, line: %d\n", currentHeader->file, currentHeader->line);
+        }
+        currentHeader = currentHeader->nextHeader;
+    } 
 }
