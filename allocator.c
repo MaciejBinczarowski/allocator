@@ -2,10 +2,18 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <zlib.h>
+#include <string.h>
 #include <pthread.h>
 
 #define HEADER_SIZE sizeof(struct Header)
 #define MIN_BLOCK_SIZE 32
+#define alloc(size_to_alloc) alloc(size_to_alloc, __FILE__, __LINE__)
+
+void* alloc(size_t);
+void dealloc(void*);
+static uLong calculateControlSumForHeader(struct Header*);
+static void printBlockList(void);
+void initAllocator(void);
 
 /*
  *  if compilator is GNUC then allocator gets inititialized at start of the program
@@ -20,13 +28,6 @@ void __attribute__((constructor)) init(void)
 }
 #endif
 
-
-void* alloc(size_t);
-void dealloc(void*);
-static uLong calculateControlSumForHeader(struct Header*);
-static void printBlockList(void);
-void initAllocator(void);
-
 pthread_mutex_t mutex;
 
 struct Header
@@ -38,9 +39,22 @@ struct Header
     uLong controlSum;
 };
 
+
+static struct 
+{
+    size_t totalAllocatedBytes;
+    size_t currentAllocatedBytes;
+    size_t maxMemoryUsage;
+    size_t averageAllocatedBytes;
+    int allocationCount;
+    int totalSbrkRequests;
+    int corruptedBlocksCount;
+    int allocatedBlocksCount;
+} allocatorStatistics;
+
 int main(void)
 {
-    initAllocator();
+    // initAllocator();
     char* string = (char*) alloc(10 * sizeof(char));
     printf("zalokowano pamięć dla charów\n");
     printBlockList();
@@ -106,10 +120,17 @@ void initAllocator(void)
     initialHeader->priorHeader = NULL;
     initialHeader->nextHeader = NULL;
 
+    atexit(printStatistics);
+
     isInitialized = 1;
+
+    if (pthread_mutex_init(&mutex, NULL) != 0) {
+        fprintf(stderr, "Mutex initialization failed\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
-void* alloc(size_t size_to_alloc)
+void* alloc(size_t size_to_alloc, const char* file, int line)
 {
     if(isInitialized == 0)
     {
@@ -119,12 +140,21 @@ void* alloc(size_t size_to_alloc)
 
     // Synchronization using a mutex to prevent concurrent access by multiple threads.
     pthread_mutex_lock(&mutex);
+
+    allocatorStatistics.allocationCount += 1;
+
     struct Header* currentHeader = initialHeader;
     struct Header* priorHeader = initialHeader->priorHeader;
     while (currentHeader != NULL)
     {
         if (currentHeader->status == 0 && currentHeader->blockSize > size_to_alloc)
         {
+            // Check CRC to verify if the header has been corrupted before alloc
+            if (currentHeader->controlSum != calculateControlSumForHeader(currentHeader))
+            {
+                abort();
+            }
+
             if (currentHeader->blockSize > size_to_alloc + HEADER_SIZE + MIN_BLOCK_SIZE)
             {   
                 size_t secondBlockSize = currentHeader->blockSize - size_to_alloc - HEADER_SIZE;
@@ -133,11 +163,30 @@ void* alloc(size_t size_to_alloc)
                 secondHeader->status = 0;
                 secondHeader->priorHeader = currentHeader;
                 secondHeader->nextHeader = currentHeader->nextHeader;
+                secondHeader->controlSum = calculateControlSumForHeader(secondHeader);
                 
                 currentHeader->blockSize = size_to_alloc;
                 currentHeader->status = 1;
                 currentHeader->nextHeader = secondHeader;
+                currentHeader->controlSum = calculateControlSumForHeader(currentHeader);
             }
+            else
+            {
+                currentHeader->status = 1;
+                currentHeader->controlSum = calculateControlSumForHeader(currentHeader);
+            }
+
+            // collecting statistic
+            allocatorStatistics.totalAllocatedBytes += size_to_alloc;
+            allocatorStatistics.currentAllocatedBytes += size_to_alloc;
+            allocatorStatistics.averageAllocatedBytes = allocatorStatistics.totalAllocatedBytes / allocatorStatistics.allocationCount;
+            allocatorStatistics.allocatedBlocksCount += 1;
+
+            if (allocatorStatistics.currentAllocatedBytes > allocatorStatistics.maxMemoryUsage)
+            {
+                allocatorStatistics.maxMemoryUsage = allocatorStatistics.currentAllocatedBytes;
+            }
+
             pthread_mutex_unlock(&mutex);
             return (void*) (currentHeader + 1);
         }
@@ -147,6 +196,8 @@ void* alloc(size_t size_to_alloc)
 
     void* currentBrk = sbrk(0);
     void* newBrk = sbrk(HEADER_SIZE + size_to_alloc);
+
+    allocatorStatistics.totalSbrkRequests += 1;
 
     if (newBrk == (void*) -1)
     {
@@ -161,7 +212,20 @@ void* alloc(size_t size_to_alloc)
     newHeader->nextHeader = NULL;
     newHeader->controlSum = calculateControlSumForHeader(newHeader);
 
+    // update priorHeader and calculate new controlSum
     priorHeader->nextHeader = newHeader;
+    priorHeader->controlSum = calculateControlSumForHeader(priorHeader);
+
+    // collecting statistic of max and total allocated memory
+    allocatorStatistics.totalAllocatedBytes += size_to_alloc;
+    allocatorStatistics.currentAllocatedBytes += size_to_alloc;
+    allocatorStatistics.averageAllocatedBytes = allocatorStatistics.totalAllocatedBytes / allocatorStatistics.allocationCount;
+    allocatorStatistics.allocatedBlocksCount += 1;
+    
+    if (allocatorStatistics.currentAllocatedBytes > allocatorStatistics.maxMemoryUsage)
+    {
+        allocatorStatistics.maxMemoryUsage = allocatorStatistics.currentAllocatedBytes;
+    }
 
     pthread_mutex_unlock(&mutex);
 
@@ -178,8 +242,26 @@ void dealloc(void* block_to_dealloc)
 
     // synchronization using a mutex to prevent concurrent access by multiple threads.
     pthread_mutex_lock(&mutex);
+
     struct Header* header_to_dealloc = (struct Header*) ((char*)(block_to_dealloc) - HEADER_SIZE);
+
+    // Check CRC to verify if the header has been corrupted
+    uLong currentCRC = header_to_dealloc->controlSum;
+    uLong newCRC = calculateControlSumForHeader(header_to_dealloc);
+
+    if (currentCRC != newCRC)
+    {
+        abort();
+    }
+
+    // mark block as free and clear its memory
     header_to_dealloc->status = 0;
+    memset(header_to_dealloc + 1, 0, header_to_dealloc->blockSize);
+    header_to_dealloc->controlSum = calculateControlSumForHeader(header_to_dealloc);
+
+    // update statistics
+    allocatorStatistics.currentAllocatedBytes -= header_to_dealloc->blockSize;
+    allocatorStatistics.allocatedBlocksCount -= 1;
 
     // if next block is then free merge them together
     if (header_to_dealloc->nextHeader != NULL)
@@ -192,10 +274,17 @@ void dealloc(void* block_to_dealloc)
             {
                 header_to_dealloc->nextHeader->nextHeader->priorHeader = header_to_dealloc;
                 header_to_dealloc->nextHeader = header_to_dealloc->nextHeader->nextHeader;
+
+                 // calculate new controlSum for nexHeader and for headerToDeallloc
+                header_to_dealloc->nextHeader->controlSum = calculateControlSumForHeader(header_to_dealloc->nextHeader);
+                header_to_dealloc->controlSum = calculateControlSumForHeader(header_to_dealloc);
             }
             else
             {
                 header_to_dealloc->nextHeader = NULL;
+
+                //update controlSum
+                header_to_dealloc->controlSum = calculateControlSumForHeader(header_to_dealloc);
             }
         }
     }
@@ -211,10 +300,17 @@ void dealloc(void* block_to_dealloc)
             {
                 header_to_dealloc->priorHeader->nextHeader = header_to_dealloc->nextHeader;
                 header_to_dealloc->nextHeader->priorHeader = header_to_dealloc->priorHeader;
+
+                //calculate controlSum for priorHeader and nextHeader
+                header_to_dealloc->priorHeader->controlSum = calculateControlSumForHeader(header_to_dealloc->priorHeader);
+                header_to_dealloc->nextHeader->controlSum = calculateControlSumForHeader(header_to_dealloc->nextHeader);
             }
             else
             {
                 header_to_dealloc->priorHeader->nextHeader = NULL;
+
+                //update controlSum
+                header_to_dealloc->priorHeader->controlSum = calculateControlSumForHeader(header_to_dealloc->priorHeader);
             }
         }
     }
@@ -239,7 +335,14 @@ static void printBlockList(void)
     printf("Bloki w pamięci:\n");
     while (currentHeader != NULL)
     {
-        printf("size: %zu, controlSum: %d, status: %d\n", currentHeader->blockSize, currentHeader->controlSum, currentHeader->status);
+        printf("size: %zu, controlSum: %lu, status: %d\n", currentHeader->blockSize, currentHeader->controlSum, currentHeader->status);
         currentHeader = currentHeader->nextHeader;
     } 
+}
+
+void printStatistics()
+{
+    printf("allocation count: %d\ntotal bytes allocated: %zu\n", allocatorStatistics.allocationCount, allocatorStatistics.totalAllocatedBytes);
+    printf("current alocated bytes: %zu\nmax memory usage: %zu", allocatorStatistics.currentAllocatedBytes, allocatorStatistics.maxMemoryUsage);
+    printf("total sbrk requests: %d\naverage allocated bytes: %zu", allocatorStatistics.totalSbrkRequests, allocatorStatistics.averageAllocatedBytes);
 }
