@@ -1,4 +1,4 @@
-#include "allocator.h"
+#include "../../src/allocator.h"
 #include <CUnit/CUnit.h>
 #include <CUnit/Basic.h>
 
