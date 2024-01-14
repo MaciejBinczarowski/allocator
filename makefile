@@ -21,6 +21,7 @@ ANALYZE_PROGRAM = analyze_program
 all: regression
 
 build_test:
+	mkdir build build/test/ build/test/unit build/test/e2e
 	$(CC) $(CFLAGS) -o $(BUILD_UNIT_DIR)/$(TEST_PROGRAM) $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/test1 $(E2E_TEST_DIR)/normal_scenario.c $(SRC_FILES) -lz -lcunit
 	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/test2 $(E2E_TEST_DIR)/seq_fault_test.c $(SRC_FILES) -lz -lcunit
@@ -29,7 +30,7 @@ test: build_test
 	$(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
 	$(E2E_SCRIPT)
 	
-regression: test analyze
+regression: test analyze clean
 
 analyze: build_test
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --trace-children=yes --error-exitcode=1 $(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
@@ -65,6 +66,5 @@ analyze: build_test
 	# rm -f ./program
 
 clean:
-	rm -f $(BUILD_DIR)/$(TEST_PROGRAM) $(BUILD_DIR)/$(ANALYZE_PROGRAM) $(BUILD_DIR)/*.gc* $(BUILD_DIR)/build/*.o
-	rm -f $(BUILD_E2E_DIR)/* $(BUILD_UNIT_DIR)/*
+	rm -fr build
 
