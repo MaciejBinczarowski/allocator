@@ -3,7 +3,7 @@ source /etc/os-release
 case "$ID" in
     "debian" | "linuxmint" | "ubuntu")
         export PKG_UPDATE="apt-get update"
-        export PKG_INSTALL="apt-get install -y --user"
+        export PKG_INSTALL="apt-get install -y"
         ;;
     "fedora")
         export PKG_UPDATE="dnf update"

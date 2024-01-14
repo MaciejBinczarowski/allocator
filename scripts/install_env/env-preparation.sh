@@ -4,6 +4,6 @@ source scripts/install_env/PKG_EXPORT.sh
 
 echo $PKG_UPDATE
 
-$PKG_UPDATE
+sudo $PKG_UPDATE
 
-$PKG_INSTALL gcc make git clang cmake clang-tools
+sudo $PKG_INSTALL gcc make git clang cmake clang-tools
