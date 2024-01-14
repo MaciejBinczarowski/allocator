@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -fprofile-arcs -ftest-coverage
+CFLAGS = -g
 
 BUILD_DIR = build
 
@@ -9,7 +9,7 @@ BUILD_UNIT_DIR = build/test/unit
 
 E2E_TEST_DIR = test/e2e
 BUILD_E2E_DIR = build/test/e2e
-E2E_SCRIPT = test/e2e/test.sh
+E2E_SCRIPT = test/e2e/test.py
 
 SRC_FILES = $(SRC_DIR)/*.c
 UNIT_TEST_FILES = $(UNIT_TEST_DIR)/*.c
@@ -18,17 +18,17 @@ E2E_TEST_FILES = $(E2E_TEST_DIR)/*.c
 TEST_PROGRAM = tests_program
 ANALYZE_PROGRAM = analyze_program
 
-all: regression
+all: regression clean
 
 build_test:
-	mkdir build build/test/ build/test/unit build/test/e2e
+	mkdir -p build/test/unit build/test/e2e
 	$(CC) $(CFLAGS) -o $(BUILD_UNIT_DIR)/$(TEST_PROGRAM) $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
-	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/test1 $(E2E_TEST_DIR)/normal_scenario.c $(SRC_FILES) -lz -lcunit
-	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/test2 $(E2E_TEST_DIR)/seq_fault_test.c $(SRC_FILES) -lz -lcunit
+	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/correct_scenario $(E2E_TEST_DIR)/normal_scenario.c $(SRC_FILES) -lz -lcunit
+	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/seq_fault_test $(E2E_TEST_DIR)/seq_fault_test.c $(SRC_FILES) -lz -lcunit
 
 test: build_test
 	$(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
-	$(E2E_SCRIPT)
+	python3 $(E2E_SCRIPT)
 	
 regression: test analyze clean
 
@@ -61,9 +61,10 @@ analyze: build_test
 	./program
 	rm -f ./program
 
-	# clang -flto -fsanitize=dataflow -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
-	# ./program
-	# rm -f ./program
+install:
+	sudo chmod a+x ./scripts/install_lib/install_lib.sh ./scripts/install_env/env-preparation.sh
+	./scripts/install_env/env-preparation.sh
+	./scripts/install_lib/install_lib.sh $(DESTINATION)
 
 clean:
 	rm -fr build
