@@ -7,21 +7,23 @@
 
 #include "allocator.h"
 #define MAX_FILENAME_LENGTH 64
+#define HEADER_ALIGMENT sizeof(struct Header*)
+
 struct Header
 {
-    size_t blockSize;
-    int status;
-    const char* fileName;
-    int line;
     struct Header* priorHeader;
     struct Header* nextHeader;
     uLong controlSum;
+    size_t blockSize;
+    int status;
+    int line;
+    const char* fileName;
 };
 
 #define HEADER_SIZE sizeof(struct Header)
 #define MIN_BLOCK_SIZE 32
 
-static uLong calculateControlSumForHeader(struct Header*);
+static uLong calculateControlSumForHeader(struct Header* header);
 static void printStatistics(void);
 
 /*
@@ -50,22 +52,22 @@ void initAllocator(void)
 {   
     if(isInitialized == 1)
     {
-        fprintf(stderr, "allocator is already initialized");
-        exit(EXIT_FAILURE);
+        (void)fprintf(stderr, "allocator is already initialized");
+        pthread_exit((void*)EXIT_FAILURE);
     }
 
     void* startBrk = sbrk(0);
-    if(startBrk == (void*) -1)
+    if(startBrk == (void*) -1) //NOLINT
     {
-        fprintf(stderr, "Heap error");
-        exit(EXIT_FAILURE);
+        (void)fprintf(stderr, "Heap error");
+        pthread_exit((void*)EXIT_FAILURE);
     }
 
     void* newStartBrk = sbrk(HEADER_SIZE);
-    if (newStartBrk == (void*) -1)
+    if (newStartBrk == (void*) -1)  //NOLINT
     {
-        fprintf(stderr, "Out of memory");
-        exit(EXIT_FAILURE);
+        (void)fprintf(stderr, "Out of memory");
+        pthread_exit((void*)EXIT_FAILURE);
     }
     
     initialHeader = (struct Header*) startBrk;
@@ -74,13 +76,14 @@ void initAllocator(void)
     initialHeader->priorHeader = NULL;
     initialHeader->nextHeader = NULL;
 
-    atexit(printStatistics);
+    (void)atexit(printStatistics);
 
     isInitialized = 1;
 
-    if (pthread_mutex_init(&mutex, NULL) != 0) {
-        fprintf(stderr, "Mutex initialization failed\n");
-        exit(EXIT_FAILURE);
+    if (pthread_mutex_init(&mutex, NULL) != 0)
+    {
+        (void)fprintf(stderr, "Mutex initialization failed\n");
+        pthread_exit((void*)EXIT_FAILURE);
     }
 }
 
@@ -88,8 +91,8 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
 {
     if(isInitialized == 0)
     {
-        fprintf(stderr, "allocator is not initialized");
-        exit(EXIT_FAILURE);
+        (void)fprintf(stderr, "allocator is not initialized");
+        pthread_exit((void*)EXIT_FAILURE);
     }
 
     // Synchronization using a mutex to prevent concurrent access by multiple threads.
@@ -97,15 +100,21 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
 
     allocatorStatistics.allocationCount += 1;
 
+    if (size_to_alloc <= 0)
+    {
+        return NULL;
+    }
+
+    // Align the allocated memory to the alignment of the header
+    while (size_to_alloc % HEADER_ALIGMENT != 0)
+    {
+        size_to_alloc++;
+    }
+
     struct Header* currentHeader = initialHeader;
     struct Header* priorHeader = initialHeader->priorHeader;
     while (currentHeader != NULL)
     {
-        if (size_to_alloc <= 0)
-        {
-            return NULL;
-        }
-
         if (currentHeader->status == 0 && currentHeader->blockSize >= size_to_alloc)
         {
             // Check CRC to verify if the header has been corrupted before alloc
@@ -115,7 +124,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
             }
 
             // save the file and the line where the allocation was called
-            strrchr(file, '/');
+            (void)strrchr(file, '/');
             currentHeader->fileName = file;
             currentHeader->line = line;
 
@@ -163,7 +172,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
 
     allocatorStatistics.totalSbrkRequests += 1;
 
-    if (newBrk == (void*) -1)
+    if (newBrk == (void*) -1)  //NOLINT
     {
         pthread_mutex_unlock(&mutex);
         return NULL;
@@ -176,7 +185,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
     newHeader->nextHeader = NULL;
     newHeader->controlSum = calculateControlSumForHeader(newHeader);
 
-    strrchr(file, '/');
+    (void)strrchr(file, '/');
     newHeader->fileName = file;
     newHeader->line = line;
 
@@ -204,8 +213,8 @@ void dealloc(void* block_to_dealloc)
 {
     if(isInitialized == 0)
     {
-        fprintf(stderr, "allocator is not initialized");
-        exit(EXIT_FAILURE);
+        (void)fprintf(stderr, "allocator is not initialized");
+        pthread_exit((void*)EXIT_FAILURE);
     }
 
     // synchronization using a mutex to prevent concurrent access by multiple threads.
@@ -232,7 +241,7 @@ void dealloc(void* block_to_dealloc)
     header_to_dealloc->status = 0;
     header_to_dealloc->fileName = NULL;
     header_to_dealloc->line = 0;
-    memset(header_to_dealloc + 1, 0, header_to_dealloc->blockSize);
+    memset(header_to_dealloc + 1, 0, header_to_dealloc->blockSize); //NOLINT
     header_to_dealloc->controlSum = calculateControlSumForHeader(header_to_dealloc);
 
     // update statistics
@@ -299,8 +308,8 @@ static uLong calculateControlSumForHeader(struct Header* header)
     uLong controlSum = 0;
     controlSum = crc32(controlSum, (Bytef*) &(header->blockSize), sizeof(header->blockSize));
     controlSum = crc32(controlSum, (Bytef*) &(header->status), sizeof(header->status));
-    controlSum = crc32(controlSum, (Bytef*) &(header->priorHeader), sizeof(header->priorHeader));
-    controlSum = crc32(controlSum, (Bytef*) &(header->nextHeader), sizeof(header->nextHeader));
+    controlSum = crc32(controlSum, (Bytef*) &(header->priorHeader), sizeof(struct Header*));
+    controlSum = crc32(controlSum, (Bytef*) &(header->nextHeader), sizeof(struct Header*));
     return controlSum;
 }
 

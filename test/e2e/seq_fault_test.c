@@ -1,4 +1,5 @@
 #include "../../src/allocator.h"
+#include <stdio.h>
 
 int main(int argc, char const *argv[])
 {
@@ -6,7 +7,6 @@ int main(int argc, char const *argv[])
     char* j = (char*) alloc(100 * sizeof(char));
 
     i[15] = 'd';
-
     dealloc(j);
     dealloc(i);
 
