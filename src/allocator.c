@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <zlib.h>
+#include <zconf.h>
 #include <string.h>
 #include <pthread.h>
 
@@ -29,9 +30,8 @@ static void printStatistics(void);
 /*
  *  if compilator is GNUC then allocator gets inititialized at start of the program
  * otherwise user needs to initialize allocator manually
- * when static variable isInitialized is 0 that means it is not initialized and 1 points it is
+ * when static variable allocatorContext.isInitialized is 0 that means it is not initialized and 1 points it is
  */
-static int isInitialized;
 #ifdef __GNUC__
 void __attribute__((constructor)) init(void)
 {
@@ -39,18 +39,22 @@ void __attribute__((constructor)) init(void)
 }
 #endif
 
-pthread_mutex_t mutex;
+#define allocatorStatistics allocatorContext.allocatorStatisticsContext
+static struct
+{
+    struct AllocatorStatistics allocatorStatisticsContext;
+    pthread_mutex_t mutex;
+    struct Header* initialHeader;
+    int isInitialized;
 
-static struct AllocatorStatistics allocatorStatistics;
-
+} allocatorContext = {.isInitialized = 0};
 
 /*
  * initialization puts header of blocksize = 0 wich is the start of headers' list structure
  */
-struct Header* initialHeader = NULL;
 void initAllocator(void)
 {   
-    if(isInitialized == 1)
+    if(allocatorContext.isInitialized == 1)
     {
         (void)fprintf(stderr, "allocator is already initialized");
         pthread_exit((void*)EXIT_FAILURE);
@@ -70,17 +74,19 @@ void initAllocator(void)
         pthread_exit((void*)EXIT_FAILURE);
     }
     
-    initialHeader = (struct Header*) startBrk;
-    initialHeader->blockSize = 0;
-    initialHeader->status = 1;
-    initialHeader->priorHeader = NULL;
-    initialHeader->nextHeader = NULL;
+    allocatorContext.initialHeader = (struct Header*) startBrk;
+    allocatorContext.initialHeader->blockSize = 0;
+    allocatorContext.initialHeader->status = 1;
+    allocatorContext.initialHeader->priorHeader = NULL;
+    allocatorContext.initialHeader->nextHeader = NULL;
 
+    // print statistics at the end of the program
     (void)atexit(printStatistics);
 
-    isInitialized = 1;
+    // mark initialization control flag
+    allocatorContext.isInitialized = 1;
 
-    if (pthread_mutex_init(&mutex, NULL) != 0)
+    if (pthread_mutex_init(&(allocatorContext.mutex), NULL) != 0)
     {
         (void)fprintf(stderr, "Mutex initialization failed\n");
         pthread_exit((void*)EXIT_FAILURE);
@@ -89,14 +95,14 @@ void initAllocator(void)
 
 void* allocate(size_t size_to_alloc, const char* file, int line)
 {
-    if(isInitialized == 0)
+    if(allocatorContext.isInitialized == 0)
     {
         (void)fprintf(stderr, "allocator is not initialized");
         pthread_exit((void*)EXIT_FAILURE);
     }
 
     // Synchronization using a mutex to prevent concurrent access by multiple threads.
-    pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&(allocatorContext.mutex));
 
     allocatorStatistics.allocationCount += 1;
 
@@ -111,8 +117,8 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
         size_to_alloc++;
     }
 
-    struct Header* currentHeader = initialHeader;
-    struct Header* priorHeader = initialHeader->priorHeader;
+    struct Header* currentHeader = allocatorContext.initialHeader;
+    struct Header* priorHeader = allocatorContext.initialHeader->priorHeader;
     while (currentHeader != NULL)
     {
         if (currentHeader->status == 0 && currentHeader->blockSize >= size_to_alloc)
@@ -121,6 +127,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
             if (currentHeader->controlSum != calculateControlSumForHeader(currentHeader))
             {
                 abort();
+                
             }
 
             // save the file and the line where the allocation was called
@@ -160,7 +167,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
                 allocatorStatistics.maxMemoryUsage = allocatorStatistics.currentAllocatedBytes;
             }
 
-            pthread_mutex_unlock(&mutex);
+            pthread_mutex_unlock(&(allocatorContext.mutex));
             return (void*) (currentHeader + 1);
         }
         priorHeader = currentHeader;
@@ -174,7 +181,7 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
 
     if (newBrk == (void*) -1)  //NOLINT
     {
-        pthread_mutex_unlock(&mutex);
+        pthread_mutex_unlock(&(allocatorContext.mutex));
         return NULL;
     }
 
@@ -204,21 +211,21 @@ void* allocate(size_t size_to_alloc, const char* file, int line)
         allocatorStatistics.maxMemoryUsage = allocatorStatistics.currentAllocatedBytes;
     }
 
-    pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&(allocatorContext.mutex));
 
     return (void*) (newHeader + 1);
 }
 
 void dealloc(void* block_to_dealloc)
 {
-    if(isInitialized == 0)
+    if(allocatorContext.isInitialized == 0)
     {
         (void)fprintf(stderr, "allocator is not initialized");
         pthread_exit((void*)EXIT_FAILURE);
     }
 
     // synchronization using a mutex to prevent concurrent access by multiple threads.
-    pthread_mutex_lock(&mutex);
+    pthread_mutex_lock(&(allocatorContext.mutex));
 
     struct Header* header_to_dealloc = (struct Header*) ((char*)(block_to_dealloc) - HEADER_SIZE);
 
@@ -299,7 +306,7 @@ void dealloc(void* block_to_dealloc)
             }
         }
     }
-    pthread_mutex_unlock(&mutex);
+    pthread_mutex_unlock(&(allocatorContext.mutex));
 }
 
 // function wich calculates CRC for passed header
@@ -316,7 +323,7 @@ static uLong calculateControlSumForHeader(struct Header* header)
 // function prints all existing blocks of memory
 void printBlockList(void)
 {
-    struct Header* currentHeader = initialHeader;
+    struct Header* currentHeader = allocatorContext.initialHeader;
     printf("memory dump:\n");
     while (currentHeader != NULL)
     {
@@ -337,7 +344,7 @@ void printStatistics(void)
     printf("current allocated bytes: %zu\n", allocatorStatistics.currentAllocatedBytes);
     printf("corrupted blocks: at least %d\n", allocatorStatistics.corruptedBlocksCount);
 
-    struct Header* currentHeader = initialHeader->nextHeader;
+    struct Header* currentHeader = allocatorContext.initialHeader->nextHeader;
     printf("unfreed blocks: %d\n", allocatorStatistics.allocatedBlocksCount);
     while (currentHeader != NULL)
     {
