@@ -5,8 +5,8 @@
 #include <zconf.h>
 #include <string.h>
 #include <pthread.h>
+#include <allocator.h>
 
-#include "allocator.h"
 #define MAX_FILENAME_LENGTH 64
 #define HEADER_ALIGMENT sizeof(struct Header*)
 
@@ -24,7 +24,7 @@ struct Header
 #define HEADER_SIZE sizeof(struct Header)
 #define MIN_BLOCK_SIZE 32
 
-static uLong calculateControlSumForHeader(struct Header* header);
+static uLong calculateControlSumForHeader(const struct Header* header);
 static void printStatistics(void);
 
 /*
@@ -310,7 +310,7 @@ void dealloc(void* block_to_dealloc)
 }
 
 // function wich calculates CRC for passed header
-static uLong calculateControlSumForHeader(struct Header* header)
+static uLong calculateControlSumForHeader(const struct Header* header)
 {
     uLong controlSum = 0;
     controlSum = crc32(controlSum, (Bytef*) &(header->blockSize), sizeof(header->blockSize));
@@ -336,6 +336,7 @@ void printBlockList(void)
 
 void printStatistics(void)
 {
+    printf("\nallocator statistics:\n");
     printf("total allocated bytes: %zu\n", allocatorStatistics.totalAllocatedBytes);
     printf("max memory usage: %zu\n", allocatorStatistics.maxMemoryUsage);
     printf("average bytes allocated: %zu\n", allocatorStatistics.averageAllocatedBytes);

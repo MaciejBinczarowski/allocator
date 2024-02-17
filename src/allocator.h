@@ -1,4 +1,4 @@
-#include <zconf.h>
+#include <stddef.h>
 
 #ifndef ALLOCATOR_H
 #define ALLOCATOR_H

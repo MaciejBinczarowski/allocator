@@ -1,11 +1,14 @@
 CC = gcc
-CFLAGS = -g
+CFLAGS = -g -I/src/allocator.h
 
 BUILD_DIR = build
 
 SRC_DIR = src
 UNIT_TEST_DIR = test/unit
 BUILD_UNIT_DIR = build/test/unit
+
+EXAMPLE_FILES = examples/*.c
+BUILD_EXAMPLES_DIR = build/examples
 
 E2E_TEST_DIR = test/e2e
 BUILD_E2E_DIR = build/test/e2e
@@ -18,10 +21,18 @@ E2E_TEST_FILES = $(E2E_TEST_DIR)/*.c
 TEST_PROGRAM = tests_program
 ANALYZE_PROGRAM = analyze_program
 
-all: regression clean
+all: build_examples build_test
+
+build_examples:
+	mkdir -p $(BUILD_EXAMPLES_DIR)
+
+	for file in $(EXAMPLE_FILES); do \
+		# basename --suffix $$file - removes the .c extension and path from the file name \
+		$(CC) $(CFLAGS) -o $(BUILD_EXAMPLES_DIR)/$$(basename --suffix=.c $$file).o $$file $(SRC_FILES) -lz -lcunit; \
+	done
 
 build_test:
-	mkdir -p build/test/unit build/test/e2e
+	mkdir -p $(BUILD_UNIT_DIR) $(BUILD_E2E_DIR)
 	$(CC) $(CFLAGS) -o $(BUILD_UNIT_DIR)/$(TEST_PROGRAM) $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/correct_scenario $(E2E_TEST_DIR)/normal_scenario.c $(SRC_FILES) -lz -lcunit
 	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/seq_fault_test $(E2E_TEST_DIR)/seq_fault_test.c $(SRC_FILES) -lz -lcunit
@@ -30,6 +41,14 @@ test: build_test
 	$(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
 	python3 $(E2E_SCRIPT)
 	
+examples: build_examples
+	for file in $(BUILD_EXAMPLES_DIR)/*.o; do \
+		echo "-----------------------------------"; \
+		echo "Running example: $$file"; \
+		$$file; \
+		echo "Example $$file finished"; \
+	done
+
 regression: test analyze clean
 
 analyze: build_test
