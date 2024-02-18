@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -I /src/include
+CFLAGS = -g -I/src/include
 
 BUILD_DIR = build
 
