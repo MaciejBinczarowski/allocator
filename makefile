@@ -56,27 +56,27 @@ analyze: build_test
 	clang-tidy --quiet -checks=bugprone-*,-bugprone-easily-swappable-parameters,clang-analyzer-*,cert-*,concurrency-*,misc-*,modernize-*,performance-*,readability-* --warnings-as-errors=* ./src/allocator.c --extra-arg=-I./src/include/
 	scan-build --status-bugs --keep-cc --show-description $(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
 	clang --analyze -Xanalyzer -analyzer-output=text ./$(BUILD_UNIT_DIR)/$(TEST_PROGRAM)
-	clang -fsanitize=address -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -fsanitize=address $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
-	clang -fsanitize=thread -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -fsanitize=thread $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
-	clang -fsanitize=memory -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -fsanitize=memory $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
-	clang -fsanitize=undefined -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -fsanitize=undefined $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
-	clang -flto -fsanitize=cfi -fvisibility=default -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -flto -fsanitize=cfi -fvisibility=default $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
-	clang -flto -fsanitize=safe-stack -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	clang -flto -fsanitize=safe-stack $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
 	rm -f ./program
 
