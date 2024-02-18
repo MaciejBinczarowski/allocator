@@ -17,4 +17,4 @@ jobs:
         CC: ${{ matrix.compiler }}
       run: |
         ./scripts/install_env/env-preparation.sh
-        make
+        make regression
