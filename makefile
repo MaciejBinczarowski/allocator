@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -I/src/allocator.h
+CFLAGS = -g -I /src/include
 
 BUILD_DIR = build
 
