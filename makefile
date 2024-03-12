@@ -60,9 +60,10 @@ analyze: build_test
 	./program
 	rm -f ./program
 
-	clang -fsanitize=thread $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
-	./program
-	rm -f ./program
+	# doesn't work because of clang bug
+	# clang -fsanitize=thread $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
+	# ./program
+	# rm -f ./program
 
 	clang -fsanitize=memory $(CFLAGS) -o program $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	./program
