@@ -23,7 +23,7 @@ ANALYZE_PROGRAM = analyze_program
 
 all: build_examples build_test
 
-build_examples:
+build_examples: env
 	mkdir -p $(BUILD_EXAMPLES_DIR)
 
 	for file in $(EXAMPLE_FILES); do \
@@ -31,7 +31,7 @@ build_examples:
 		$(CC) $(CFLAGS) -o $(BUILD_EXAMPLES_DIR)/$$(basename --suffix=.c $$file).o $$file $(SRC_FILES) -lz -lcunit; \
 	done
 
-build_test:
+build_test: env
 	mkdir -p $(BUILD_UNIT_DIR) $(BUILD_E2E_DIR)
 	$(CC) $(CFLAGS) -o $(BUILD_UNIT_DIR)/$(TEST_PROGRAM) $(UNIT_TEST_FILES) $(SRC_FILES) -lz -lcunit
 	$(CC) $(CFLAGS) -o $(BUILD_E2E_DIR)/correct_scenario $(E2E_TEST_DIR)/normal_scenario.c $(SRC_FILES) -lz -lcunit
@@ -80,9 +80,12 @@ analyze: build_test
 	./program
 	rm -f ./program
 
-install:
-	sudo chmod a+x ./scripts/install_lib/install_lib.sh ./scripts/install_env/env-preparation.sh
+env:
+	sudo chmod a+x ./scripts/install_env/env-preparation.sh
 	./scripts/install_env/env-preparation.sh
+
+install: env
+	sudo chmod a+x ./scripts/install_lib/install_lib.sh
 	./scripts/install_lib/install_lib.sh $(DESTINATION)
 
 clean:
